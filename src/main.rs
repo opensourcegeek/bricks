@@ -55,6 +55,9 @@ impl<R: Read, W: Write> GameState<R, W>  {
         //      - self.stdin/self.stdout would have to be Arc<mutex> to share between threads?
         loop {
             if self.running {
+                // TODO: If ball doesn't meet paddle when going down we should reset game,
+                // Reset: Leave bricks at current state, just re-init dropping ball
+                // from starting point and paddle position in the centre of screen.
                 self.drop_ball();
                 self.move_paddle();
                 thread::sleep(time::Duration::from_millis(100));
@@ -162,8 +165,8 @@ impl<R: Read, W: Write> GameState<R, W>  {
     }
 
     fn draw_bricks(&mut self) {
-        // Each brick is a 4x2 for ease.
-        // Draw brick for just less than half of height => (40/2 - 2) = 18
+        // Each brick is 4x2 for ease.
+        // Draw brick for just less than half of height => (40/2)
         let mut y = 2; // term is 1-based!
         while y < (self.height/2) {
             let mut x = 3;
@@ -187,7 +190,7 @@ impl<R: Read, W: Write> GameState<R, W>  {
         self.stdin.read(&mut key_pressed).unwrap();
         match key_pressed[0] {
             b'q' => { self.running = false; },
-            b'j' => {
+            b'h' => {
                 // move left
                 let new_x = self.paddle_position.0 - 1;
                 if new_x > 2 {

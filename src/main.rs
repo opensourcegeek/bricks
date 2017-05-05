@@ -2,6 +2,8 @@ extern crate termion;
 
 use std::io::{stdout, stdin, Write, Read};
 use std::{thread, time};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 
 use termion::{color, clear, style, cursor, async_stdin};
 use termion::raw::IntoRawMode;
@@ -27,6 +29,12 @@ enum Direction {
     Down
 }
 
+enum PaddleDirection {
+    Left,
+    Right,
+    Center
+}
+
 struct GameState<R, W> {
     stdout: W,
     stdin: R,
@@ -35,10 +43,11 @@ struct GameState<R, W> {
     height: u16,
     ball_position: (u16, u16),
     ball_direction: Direction,
-    paddle_position: (u16, u16)
+    paddle_position: (u16, u16),
+    last_paddle_direction: PaddleDirection
 }
 
-impl<R: Read, W: Write> GameState<R, W>  {
+impl<R: Read, W: Write> GameState<R, W> {
 
     fn start(&mut self) {
         write!(self.stdout, "{}", cursor::Hide).unwrap();
@@ -53,6 +62,7 @@ impl<R: Read, W: Write> GameState<R, W>  {
 
         // TODO: Make a threaded paddle position observer
         //      - self.stdin/self.stdout would have to be Arc<mutex> to share between threads?
+
         loop {
             if self.running {
                 // TODO: If ball doesn't meet paddle when going down we should reset game,
@@ -88,8 +98,8 @@ impl<R: Read, W: Write> GameState<R, W>  {
                     let new_height = self.ball_position.1 + 1;
                     self.ball_position = (self.ball_position.0, new_height);
                     write!(self.stdout, "{}{}",
-                       cursor::Goto(self.ball_position.0, self.ball_position.1),
-                       BALL).unwrap();
+                           cursor::Goto(self.ball_position.0, self.ball_position.1),
+                           BALL).unwrap();
 
                 } else {
                     self.ball_direction = Direction::Up;
@@ -208,6 +218,8 @@ impl<R: Read, W: Write> GameState<R, W>  {
                     write!(self.stdout, "{}{}",
                            cursor::Goto(self.paddle_position.0, self.paddle_position.1),
                            PADDLE).unwrap();
+
+                    self.last_paddle_direction = PaddleDirection::Left;
                 }
                 self.stdout.flush().unwrap();
 
@@ -230,6 +242,7 @@ impl<R: Read, W: Write> GameState<R, W>  {
                     write!(self.stdout, "{}{}",
                            cursor::Goto(self.paddle_position.0, self.paddle_position.1),
                            PADDLE).unwrap();
+                    self.last_paddle_direction = PaddleDirection::Right;
                 }
                 self.stdout.flush().unwrap();
             },
@@ -253,7 +266,8 @@ fn main() {
         ball_direction: Direction::Down,
         running: true,
         // this will be overwritten when init'ing game
-        paddle_position: (1, 1)
+        paddle_position: (1, 1),
+        last_paddle_direction: PaddleDirection::Center
     };
     game.draw_canvas();
     game.draw_walls();

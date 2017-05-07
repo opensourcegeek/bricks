@@ -5,6 +5,7 @@ use std::{thread, time};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+
 use termion::{color, clear, style, cursor, async_stdin};
 use termion::raw::IntoRawMode;
 use termion::screen::*;
@@ -23,6 +24,7 @@ mod graphics {
     pub const BALL: &'static str = "o";
     pub const BRICK: &'static str = "__|";
     pub const BRICK_LEFT: &'static str = "|";
+    pub const BRICK_WHOLE: &'static str = "▓▓▓▓";
 }
 
 use graphics::*;
@@ -54,8 +56,16 @@ struct GameState<R, W> {
     last_paddle_direction: PaddleDirection,
     previous_ball_position: Option<(i16, i16)>,
     delta_x: i16,
-    delta_y: i16
+    delta_y: i16,
+    bricks: Vec<Brick>
 }
+
+struct Brick {
+    x: i16,
+    y: i16,
+    broken: bool
+}
+
 
 impl<R: Read, W: Write> GameState<R, W> {
 
@@ -68,7 +78,9 @@ impl<R: Read, W: Write> GameState<R, W> {
 
         loop {
             if self.running {
-                self.drop_ball();
+                self.move_ball();
+                self.detect_collision();
+                self.redraw_bricks();
                 self.move_paddle();
                 thread::sleep(time::Duration::from_millis(50));
 
@@ -77,7 +89,7 @@ impl<R: Read, W: Write> GameState<R, W> {
             }
         }
         // Give user terminal back
-        write!(self.stdout, "{}{}", clear::All, style::Reset);
+        write!(self.stdout, "{}{}", clear::All, style::Reset).unwrap();
         write!(self.stdout, "{}{}", cursor::Show, cursor::Goto(1, 1)).unwrap();
     }
 
@@ -124,7 +136,7 @@ impl<R: Read, W: Write> GameState<R, W> {
         (self.ball_position.0 + self.delta_x) <= 1
     }
 
-    fn drop_ball(&mut self) -> () {
+    fn move_ball(&mut self) -> () {
         self.clear_previous_ball_position();
 
         if self.ball_reached_left_wall() || self.ball_reached_right_wall() {
@@ -142,7 +154,7 @@ impl<R: Read, W: Write> GameState<R, W> {
 
             } else {
                 // Game over!
-                write!(self.stdout, "{}", color::Fg(color::Reset));
+                write!(self.stdout, "{}", color::Fg(color::Reset)).unwrap();
                 write!(self.stdout, "{}{}",
                        cursor::Goto(85, 3), "GAME OVER - go eat bacon and drink beer!").unwrap();
                 self.reset_ball_and_saddle_positions();
@@ -182,9 +194,7 @@ impl<R: Read, W: Write> GameState<R, W> {
     fn draw_walls(&mut self) -> () {
         let width: u16 = self.width as u16;
         let height: u16 = self.height as u16;
-
         write!(self.stdout, "{}", color::Fg(color::Red)).unwrap();
-
         write!(self.stdout, "{}{}", cursor::Goto(1, 1), TOP_LEFT_CORNER).unwrap();
         write!(self.stdout, "{}", cursor::Goto(2, 1)).unwrap();
         self.draw_horizontal_line(HORIZONTAL_WALL, width - 2);
@@ -222,19 +232,55 @@ impl<R: Read, W: Write> GameState<R, W> {
     fn draw_bricks(&mut self) {
         // Each brick is 4x2 for ease.
         // Draw brick for just less than half of height => (40/2)
-        let mut y = 2; // term is 1-based!
-        while y < (self.height/2) {
-            let mut x = 3;
-            while x < (self.width - 3) {
-                if x == 3 {
-                    // First brick in this row so have BRICK_LEFT
-                    write!(self.stdout, "{}{}", cursor::Goto(x, y), BRICK_LEFT).unwrap();
-                    x += 1;
-                }
-                write!(self.stdout, "{}{}", cursor::Goto(x, y), BRICK).unwrap();
-                x += 3;
+        let mut y: i16 = 3; // term is 1-based!
+        while y < (self.height/2) as i16 {
+            let mut x: i16 = 3;
+            while x < (self.width - 4) as i16 {
+                write!(self.stdout, "{}{}", cursor::Goto(x as u16, y as u16), BRICK_WHOLE).unwrap();
+                let b = Brick {
+                    x: x,
+                    y: y,
+                    broken: false
+                };
+                self.bricks.push(b);
+                x += 6;
             }
             y += 2;
+        }
+    }
+
+    fn redraw_bricks(&mut self) -> () {
+        for b in &self.bricks {
+            if b.broken {
+                write!(self.stdout, "{}{}{}", cursor::Goto(b.x as u16, b.y as u16), color::Fg(color::Black), BRICK_WHOLE).unwrap();
+            }
+        }
+    }
+
+    fn detect_collision(&mut self) -> () {
+        write!(self.stdout, "{}{}", cursor::Goto(85, 7), format!("Total bricks: {}", self.bricks.len())).unwrap();
+        write!(self.stdout, "{}{}", cursor::Goto(85, 8), format!("x:{} y:{}", self.ball_position.0, self.ball_position.1)).unwrap();
+        for b in &mut self.bricks {
+            write!(self.stdout, "{}{}", cursor::Goto(85, 9), format!("brick x:{}, brick y:{}", b.x, b.y)).unwrap();
+            self.stdout.flush().unwrap();
+            // 4 chars make a brick
+            if (self.ball_position.0 >= b.x && self.ball_position.0 <= (b.x + 4))
+            && (self.ball_position.1 >= b.y && self.ball_position.1 <= b.y) {
+                // if not broken already then break it.
+                if !b.broken {
+                    // you could be touching the brick
+                    b.broken = true;
+                    // change x and y?
+                    self.delta_x = -self.delta_x;
+                    self.delta_y = -self.delta_y;
+                }
+                write!(self.stdout, "{}{}", cursor::Goto(85, 10), "broken brick").unwrap();
+
+            } else {
+                write!(self.stdout, "{}{}", cursor::Goto(85, 10), "not broken brick").unwrap();
+            }
+            self.stdout.flush().unwrap();
+
         }
     }
 
@@ -302,7 +348,7 @@ fn main() {
     let out = stdout();
     let mut stdout = out.lock().into_raw_mode().unwrap();
     let stdin = async_stdin();
-    write!(stdout, "{}{}{}", clear::All, style::Reset, cursor::Goto(1, 1));
+    write!(stdout, "{}{}{}", clear::All, style::Reset, cursor::Goto(1, 1)).unwrap();
 
     let mut game = GameState {
         width: 80,
@@ -317,7 +363,8 @@ fn main() {
         last_paddle_direction: PaddleDirection::Center,
         previous_ball_position: None,
         delta_x: 1,
-        delta_y: -1
+        delta_y: -1,
+        bricks: Vec::<Brick>::new()
     };
 
     game.draw_canvas();

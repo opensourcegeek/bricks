@@ -67,7 +67,7 @@ struct Brick {
 }
 
 
-impl<R: Read, W: Write> GameState<R, W> {
+impl<R: Read + Sync, W: Write + Sync> GameState<R, W> {
 
     fn start(&mut self) {
         write!(self.stdout, "{}", cursor::Hide).unwrap();
@@ -75,6 +75,22 @@ impl<R: Read, W: Write> GameState<R, W> {
         self.move_ball_to_initial_position();
         // TODO: Make a threaded paddle position observer
         //      - self.stdin/self.stdout would have to be Arc<mutex> to share between threads?
+        let mut stdin_clone = Arc::new(Mutex::new(self.stdin));
+        let mut stdout_clone = Arc::new(Mutex::new(self.stdout));
+        thread::spawn(|| {
+            {
+                let c = stdout_clone.lock();
+                match c {
+                    Ok => {
+
+                    },
+                    Err(e) => {
+                        //
+                    }
+                }
+            }
+
+        });
 
         loop {
             if self.running {

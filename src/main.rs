@@ -67,31 +67,13 @@ struct Brick {
 }
 
 
-impl<R: Read + Sync, W: Write + Sync> GameState<R, W> {
-
+impl<R: Read, W: Write> GameState<R, W> {
     fn start(&mut self) {
         write!(self.stdout, "{}", cursor::Hide).unwrap();
         self.move_saddle_to_initial_position();
         self.move_ball_to_initial_position();
         // TODO: Make a threaded paddle position observer
         //      - self.stdin/self.stdout would have to be Arc<mutex> to share between threads?
-        let mut stdin_clone = Arc::new(Mutex::new(self.stdin));
-        let mut stdout_clone = Arc::new(Mutex::new(self.stdout));
-        thread::spawn(|| {
-            {
-                let c = stdout_clone.lock();
-                match c {
-                    Ok => {
-
-                    },
-                    Err(e) => {
-                        //
-                    }
-                }
-            }
-
-        });
-
         loop {
             if self.running {
                 self.move_ball();
@@ -173,6 +155,7 @@ impl<R: Read + Sync, W: Write + Sync> GameState<R, W> {
                 write!(self.stdout, "{}", color::Fg(color::Reset)).unwrap();
                 write!(self.stdout, "{}{}",
                        cursor::Goto(85, 3), "GAME OVER - go eat bacon and drink beer!").unwrap();
+                self.empty_event_queue();                       
                 self.reset_ball_and_saddle_positions();
                 self.stdout.flush().unwrap();
                 thread::sleep(time::Duration::from_millis(2000));
@@ -187,6 +170,21 @@ impl<R: Read + Sync, W: Write + Sync> GameState<R, W> {
                               self.delta_y + self.ball_position.1);
         self.write_new_ball_position();
         self.stdout.flush().unwrap();
+    }
+
+    fn empty_event_queue(&mut self) -> () {
+        loop {
+            let mut key_pressed = [0u8; 128];
+            match self.stdin.read(&mut key_pressed) {
+                Ok(read_len) => {
+                    if read_len == 0 {
+                        break;
+                    }
+                },
+                Err(e) => {}
+            };
+            thread::sleep(time::Duration::from_millis(1));
+        }
     }
 
     fn clear_previous_ball_position(&mut self) -> () {
@@ -301,62 +299,71 @@ impl<R: Read + Sync, W: Write + Sync> GameState<R, W> {
     }
 
     fn move_paddle(&mut self) {
-        let mut key_pressed = [0u8];
+        let mut key_pressed = [0u8; 128];
         // TODO: Add some mechanism to jump the data when key is pressed down constantly!
-        self.stdin.read(&mut key_pressed).unwrap();
-        match key_pressed[0] {
-            b'q' => { self.running = false; },
-            b'h' => {
-                // move left
-                let new_x = self.paddle_position.0 - 2;
-                if new_x > 1 {
-                    // clear out old 2 blocks from right
-                    write!(self.stdout, "{}",
-                       cursor::Goto((self.paddle_position.0 + 9) as u16, self.paddle_position.1 as u16))
-                    .unwrap();
-                    write!(self.stdout, "{}{}{}",
-                           color::Fg(color::Black),
-                           BALL, BALL).unwrap();
-
-                    write!(self.stdout, "{}",
-                           color::Fg(color::Blue)).unwrap();
-
-                    self.paddle_position = (new_x, self.paddle_position.1);
-                    write!(self.stdout, "{}{}",
-                           cursor::Goto(self.paddle_position.0 as u16, self.paddle_position.1 as u16),
-                           PADDLE).unwrap();
-
-                    self.last_paddle_direction = PaddleDirection::Left;
-                }
-                self.stdout.flush().unwrap();
-
-            },
-            b'k' => {
-                // move right
-                let new_x = self.paddle_position.0 + 2;
-                if (new_x + 7) < (self.width - 2) as i16 {
-                    // clear out old 2 blocks from left
-                    write!(self.stdout, "{}",
-                       cursor::Goto(self.paddle_position.0 as u16, self.paddle_position.1 as u16))
-                    .unwrap();
-                    write!(self.stdout, "{}{}{}",
-                           color::Fg(color::Black), BALL, BALL).unwrap();
-
-                    write!(self.stdout, "{}",
-                           color::Fg(color::Blue)).unwrap();
-
-                    self.paddle_position = (new_x, self.paddle_position.1);
-                    write!(self.stdout, "{}{}",
-                           cursor::Goto(self.paddle_position.0 as u16, self.paddle_position.1 as u16),
-                           PADDLE).unwrap();
-                    self.last_paddle_direction = PaddleDirection::Right;
-
+        match self.stdin.read(&mut key_pressed) {
+            Ok(read_len) => {
+                if read_len > 5 {
+                    key_pressed[0] = key_pressed[read_len - 1];
                 }
 
-                self.stdout.flush().unwrap();
+                match key_pressed[0] {
+                    b'q' => { self.running = false; },
+                    b'h' => {
+                        // move left
+                        let new_x = self.paddle_position.0 - 2;
+                        if new_x > 1 {
+                            // clear out old 2 blocks from right
+                            write!(self.stdout, "{}",
+                            cursor::Goto((self.paddle_position.0 + 9) as u16, self.paddle_position.1 as u16))
+                            .unwrap();
+                            write!(self.stdout, "{}{}{}",
+                                color::Fg(color::Black),
+                                BALL, BALL).unwrap();
+
+                            write!(self.stdout, "{}",
+                                color::Fg(color::Blue)).unwrap();
+
+                            self.paddle_position = (new_x, self.paddle_position.1);
+                            write!(self.stdout, "{}{}",
+                                cursor::Goto(self.paddle_position.0 as u16, self.paddle_position.1 as u16),
+                                PADDLE).unwrap();
+
+                            self.last_paddle_direction = PaddleDirection::Left;
+                        }
+                        self.stdout.flush().unwrap();
+
+                    },
+                    b'k' => {
+                        // move right
+                        let new_x = self.paddle_position.0 + 2;
+                        if (new_x + 7) < (self.width - 2) as i16 {
+                            // clear out old 2 blocks from left
+                            write!(self.stdout, "{}",
+                            cursor::Goto(self.paddle_position.0 as u16, self.paddle_position.1 as u16))
+                            .unwrap();
+                            write!(self.stdout, "{}{}{}",
+                                color::Fg(color::Black), BALL, BALL).unwrap();
+
+                            write!(self.stdout, "{}",
+                                color::Fg(color::Blue)).unwrap();
+
+                            self.paddle_position = (new_x, self.paddle_position.1);
+                            write!(self.stdout, "{}{}",
+                                cursor::Goto(self.paddle_position.0 as u16, self.paddle_position.1 as u16),
+                                PADDLE).unwrap();
+                            self.last_paddle_direction = PaddleDirection::Right;
+
+                        }
+
+                        self.stdout.flush().unwrap();
+                    },
+                    _ => {}
+                }
             },
-            _ => {}
-        }
+            Err(e) => {}
+        };
+        
     }
 }
 
